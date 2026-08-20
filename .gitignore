@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+vendor/
+
+# env & secrets
+.env
+*.env
+!.env.example
+
+# build output
+dist/
+/api/storage/*.key
+
+# logs
+*.log
+npm-debug.log*
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.idea/
+.vscode/
+*.swp
