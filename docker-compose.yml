@@ -8,14 +8,12 @@
 
 services:
   # ── parser: Express JS-ecosystem microservice ──
-  # (uncomment once parser/Dockerfile exists — Step 2)
-  #
-  # parser:
-  #   build: ./parser
-  #   ports:
-  #     - "${PARSER_PORT:-3001}:3001"
-  #   environment:
-  #     - PARSER_PORT=3001
+  parser:
+    build: ./parser
+    ports:
+      - "${PARSER_PORT:-3001}:3001"
+    environment:
+      - PARSER_PORT=3001
 
   # ── api: Laravel brain (auth, queue, orchestration) ──
   # (added in Step 3)

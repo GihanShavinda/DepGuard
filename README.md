@@ -46,7 +46,7 @@ Each dependency gets a 0–100 Trust Score blending:
 🚧 In development.
 
 - [x] Step 1 — Root scaffold
-- [ ] Step 2 — Parser service (`/parse`)
+- [x] Step 2 — Parser service (`/parse`)
 - [ ] Step 3 — Laravel API skeleton + DB
 - [ ] Step 4 — OSV integration (spine works end to end)
 - [ ] Step 5 — Angular skeleton + first screen
