@@ -1,20 +1,30 @@
 <?php
 
-// Production-ready CORS. Origins come from the FRONTEND_URL env var so you can
-// point it at your Vercel domain without editing code. Comma-separate multiple.
+// Copy this to api/config/cors.php
 //
-// Example on Render (Laravel service env):
-//   FRONTEND_URL=https://depguard.vercel.app,http://localhost:4200
-
-$origins = array_filter(array_map('trim', explode(',', env('FRONTEND_URL', 'http://localhost:4200'))));
+// Laravel 11/12 already applies the HandleCors middleware to routes.
+// This config allows your Angular dev server (localhost:4200) to call the API.
 
 return [
     'paths' => ['api/*', 'sanctum/csrf-cookie'],
+
     'allowed_methods' => ['*'],
-    'allowed_origins' => $origins,
+
+    // The Angular dev server origin. Add your deployed frontend origin here too.
+    'allowed_origins' => [
+        'http://localhost:4200',
+        'http://127.0.0.1:4200',
+    ],
+
     'allowed_origins_patterns' => [],
+
     'allowed_headers' => ['*'],
+
     'exposed_headers' => [],
+
     'max_age' => 0,
+
+    // We're not using cookie auth yet (that comes with Sanctum in Phase 2),
+    // so credentials can stay false for now.
     'supports_credentials' => false,
 ];
