@@ -30,7 +30,8 @@ class ProcessScan implements ShouldQueue
 
     public function __construct(
         public int $scanId,
-        public array $lockfile,
+        public string $content,
+        public ?string $filename = null,
     ) {
     }
 
@@ -43,13 +44,14 @@ class ProcessScan implements ShouldQueue
 
         // --- 1. Parse ---
         try {
-            $result = $parser->parseLockfile($this->lockfile);
+            $result = $parser->parseManifest($this->content, $this->filename);
         } catch (RuntimeException $e) {
             $scan->update(['status' => 'failed', 'summary_counts' => ['error' => $e->getMessage()]]);
             return;
         }
 
         $dependencies = $result['dependencies'] ?? [];
+        $ecosystem = $result['ecosystem'] ?? 'npm';
         $depList = array_map(
             fn ($d) => ['name' => $d['name'], 'version' => $d['version']],
             $dependencies
@@ -67,17 +69,22 @@ class ProcessScan implements ShouldQueue
         $osvFailed = false;
         $findingsByKey = [];
         try {
-            $findingsByKey = $osv->scan($depList, 'npm');
+            $findingsByKey = $osv->scan($depList, $ecosystem);
         } catch (Throwable) {
             $osvFailed = true;
         }
 
         // --- 3. Heuristics (best-effort) ---
+        // Trust Score heuristics rely on the npm registry, so they only
+        // apply to npm packages. For Packagist (PHP), we still get full CVE
+        // scanning via OSV; heuristics are simply skipped (honest scoping).
         $heuristics = [];
-        try {
-            $heuristics = $parser->scoreHeuristics($heurList);
-        } catch (Throwable) {
-            $heuristics = [];
+        if ($ecosystem === 'npm') {
+            try {
+                $heuristics = $parser->scoreHeuristics($heurList);
+            } catch (Throwable) {
+                $heuristics = [];
+            }
         }
 
         // --- 4. Persist ---
@@ -137,6 +144,7 @@ class ProcessScan implements ShouldQueue
 
         $scan->update([
             'status'         => 'done',
+            'ecosystem'      => $ecosystem,
             'summary_counts' => [
                 'total'              => count($dependencies),
                 'direct'             => $directCount,

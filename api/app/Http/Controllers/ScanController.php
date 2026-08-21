@@ -11,34 +11,46 @@ class ScanController extends Controller
 {
     /**
      * POST /api/scans
+     * Body: { "content": "<raw manifest text>", "filename": "package-lock.json", "source_name": "my-app" }
      *
-     * Creates the scan record, dispatches the heavy work to a background job,
-     * and returns IMMEDIATELY with status "processing". The frontend then polls
-     * GET /api/scans/{id} until status is "done" or "failed".
+     * `content` is the raw text of any supported manifest (npm/composer/pypi/
+     * rubygems/go/cargo). `filename` helps the parser detect the ecosystem.
+     * Legacy: also accepts { "lockfile": {...} } (a decoded npm/composer object).
+     *
+     * Dispatches the scan to a background job; returns immediately (202).
      */
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'lockfile'    => ['required', 'array'],
+            'content'     => ['nullable', 'string'],
+            'filename'    => ['nullable', 'string', 'max:255'],
+            'lockfile'    => ['nullable', 'array'],
             'source_name' => ['nullable', 'string', 'max:255'],
         ]);
 
+        // Normalise input to a raw text string.
+        $content = $validated['content'] ?? null;
+        if ($content === null && !empty($validated['lockfile'])) {
+            $content = json_encode($validated['lockfile']);
+        }
+
+        if (!$content) {
+            return response()->json([
+                'message' => 'Provide "content" (raw manifest text) or "lockfile" (JSON).',
+            ], 422);
+        }
+
         $scan = Scan::create([
-            'ecosystem'   => 'npm',
+            'ecosystem'   => 'unknown',
             'source_name' => $validated['source_name'] ?? null,
             'status'      => 'processing',
         ]);
 
-        ProcessScan::dispatch($scan->id, $validated['lockfile']);
+        ProcessScan::dispatch($scan->id, $content, $validated['filename'] ?? null);
 
-        // 202 Accepted: work is queued, not finished.
         return response()->json($scan->load('dependencies.findings'), 202);
     }
 
-    /**
-     * GET /api/scans/{scan}
-     * Frontend polls this. Returns current status + (when done) full results.
-     */
     public function show(Scan $scan): JsonResponse
     {
         return response()->json($scan->load('dependencies.findings'));

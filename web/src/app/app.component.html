@@ -15,10 +15,10 @@
         <span class="eyebrow">// manifest intake</span>
         <h1>Inspect a dependency tree for <span class="hl">known & unknown</span> threats</h1>
         <p class="lede">
-          Paste a <code>package-lock.json</code> (preferred) or <code>package.json</code>.
-          DepGuard resolves the tree, checks every package against the OSV vulnerability
-          database, <em>and</em> scores each one for supply-chain risk — catching suspicious
-          packages that have no CVE yet.
+          Paste a lockfile from <strong>npm, PHP, Python, Ruby, Go, or Rust</strong> — DepGuard
+          auto-detects the ecosystem, resolves the tree, checks every package against the OSV
+          vulnerability database, <em>and</em> scores npm packages for supply-chain risk (catching
+          suspicious packages that have no CVE yet).
         </p>
       </div>
 
@@ -33,11 +33,11 @@
           <label for="lockfile">manifest</label>
           <label class="file-btn">
             {{ fileName() || 'choose file' }}
-            <input type="file" accept=".json,application/json" (change)="onFileSelected($event)" hidden />
+            <input type="file" accept=".json,.lock,.txt,.mod,.sum,application/json,text/plain" (change)="onFileSelected($event)" hidden />
           </label>
         </div>
         <textarea id="lockfile" spellcheck="false"
-          placeholder='{ "name": "my-app", "lockfileVersion": 3, "packages": { ... } }'
+          placeholder='package-lock.json · composer.lock · requirements.txt · Gemfile.lock · go.mod · Cargo.lock'
           [ngModel]="lockfileText()" (ngModelChange)="lockfileText.set($event)"></textarea>
       </div>
 
@@ -71,7 +71,7 @@
         </div>
         <div class="verdict-body">
           <p class="verdict-caption">{{ gradeCaption() }}</p>
-          <h2>{{ s.source_name || 'unnamed project' }}</h2>
+          <h2>{{ s.source_name || 'unnamed project' }} <span class="eco-badge">{{ ecosystemLabel() }}</span></h2>
           <div class="verdict-stats">
             <span class="stat"><strong>{{ s.summary_counts?.total }}</strong> packages</span>
             <span class="stat stat-cve"><strong>{{ vulnerableDeps().length }}</strong> vulnerable</span>
@@ -81,8 +81,48 @@
             <p class="notice notice-warn">OSV unreachable — dependencies resolved but not CVE-checked.</p>
           }
         </div>
-        <button class="new-scan" (click)="reset()">new scan</button>
+        <div class="verdict-actions">
+          <button class="ghost-btn" (click)="exportJson()">↓ export</button>
+          <button class="new-scan" (click)="reset()">new scan</button>
+        </div>
       </div>
+
+      <!-- ===== SEVERITY CHART ===== -->
+      @if (vulnerableDeps().length > 0 || suspiciousDeps().length > 0) {
+        <div class="chart-card">
+          <div class="chart-title">Severity breakdown</div>
+          <div class="chart-bars">
+            @for (b of severityBreakdown(); track b.label) {
+              <div class="chart-row">
+                <span class="chart-label">{{ b.label }}</span>
+                <span class="chart-track">
+                  <span class="chart-fill" [class]="b.cls"
+                    [style.width.%]="(b.count / maxSeverityCount()) * 100"></span>
+                </span>
+                <span class="chart-count">{{ b.count }}</span>
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- ===== FILTERS ===== -->
+        <div class="filters">
+          <div class="filter-group">
+            <span class="filter-label">type</span>
+            <button class="chip" [class.active]="typeFilter()==='all'" (click)="setTypeFilter('all')">all</button>
+            <button class="chip" [class.active]="typeFilter()==='cve'" (click)="setTypeFilter('cve')">CVE</button>
+            <button class="chip" [class.active]="typeFilter()==='heuristic'" (click)="setTypeFilter('heuristic')">trust</button>
+          </div>
+          <div class="filter-group">
+            <span class="filter-label">severity</span>
+            <button class="chip" [class.active]="severityFilter()==='all'" (click)="setSeverityFilter('all')">all</button>
+            <button class="chip" [class.active]="severityFilter()==='critical'" (click)="setSeverityFilter('critical')">critical</button>
+            <button class="chip" [class.active]="severityFilter()==='high'" (click)="setSeverityFilter('high')">high</button>
+            <button class="chip" [class.active]="severityFilter()==='moderate'" (click)="setSeverityFilter('moderate')">moderate</button>
+            <button class="chip" [class.active]="severityFilter()==='low'" (click)="setSeverityFilter('low')">low</button>
+          </div>
+        </div>
+      }
 
       <!-- ===== SUSPICIOUS / TRUST SCORE ===== -->
       @if (suspiciousDeps().length > 0) {
@@ -144,7 +184,7 @@
                 <span class="dep-count">{{ cveFindings(dep).length }} CVE{{ cveFindings(dep).length > 1 ? 's' : '' }}</span>
               </div>
               <div class="finding-list">
-                @for (f of cveFindings(dep); track trackByFinding($index, f)) {
+                @for (f of filteredCveFindings(dep); track trackByFinding($index, f)) {
                   <div class="finding">
                     <span class="sev-badge" [class]="severityClass(f.severity)">{{ f.severity || 'Unknown' }}</span>
                     <div class="finding-body">
@@ -154,7 +194,10 @@
                       </div>
                       @if (f.title) { <p class="finding-title">{{ f.title }}</p> }
                       @if (f.fixed_version) {
-                        <p class="remediation">→ fixed in <code>{{ f.fixed_version }}</code> — upgrade {{ dep.name }} to {{ f.fixed_version }}+</p>
+                        <p class="remediation">
+                          → fixed in <code>{{ f.fixed_version }}</code> — upgrade {{ dep.name }} to {{ f.fixed_version }}+
+                          <button class="copy-btn" (click)="copyUpgrade(dep, f)" title="Copy upgrade command">copy</button>
+                        </p>
                       }
                     </div>
                   </div>

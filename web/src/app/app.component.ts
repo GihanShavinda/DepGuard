@@ -23,21 +23,79 @@ export class AppComponent {
   error = signal<string>('');
   scan = signal<Scan | null>(null);
 
+  // dashboard controls
+  severityFilter = signal<string>('all');   // all|critical|high|moderate|low
+  typeFilter = signal<string>('all');       // all|cve|heuristic
+
   constructor(private scans: ScanService) {}
 
-  // packages that have at least one CVE finding
+  // ecosystem label for display
+  ecosystemLabel = computed<string>(() => {
+    const s = this.scan();
+    if (!s) return '';
+    const map: Record<string, string> = {
+      npm: 'npm',
+      Packagist: 'PHP / Composer',
+      PyPI: 'Python / PyPI',
+      RubyGems: 'Ruby / RubyGems',
+      Go: 'Go',
+      'crates.io': 'Rust / crates.io',
+    };
+    return map[s.ecosystem] ?? s.ecosystem;
+  });
+
+  // severity breakdown for the summary chart (CVE findings)
+  severityBreakdown = computed<{ label: string; count: number; cls: string }[]>(() => {
+    const s = this.scan();
+    if (!s) return [];
+    const buckets: Record<string, number> = { Critical: 0, High: 0, Moderate: 0, Low: 0 };
+    for (const d of s.dependencies) {
+      for (const f of this.cveFindings(d)) {
+        const key = this.normalizeSev(f.severity);
+        if (key in buckets) buckets[key]++;
+      }
+    }
+    return [
+      { label: 'Critical', count: buckets['Critical'], cls: 'sev-critical' },
+      { label: 'High', count: buckets['High'], cls: 'sev-high' },
+      { label: 'Moderate', count: buckets['Moderate'], cls: 'sev-moderate' },
+      { label: 'Low', count: buckets['Low'], cls: 'sev-low' },
+    ];
+  });
+
+  maxSeverityCount = computed<number>(() =>
+    Math.max(1, ...this.severityBreakdown().map((b) => b.count))
+  );
+
+  normalizeSev(sev: string | null | undefined): string {
+    const v = (sev ?? '').toLowerCase();
+    if (v === 'medium') return 'Moderate';
+    return v ? v.charAt(0).toUpperCase() + v.slice(1) : 'Unknown';
+  }
+
+  // packages that have at least one CVE finding (respecting filters)
   vulnerableDeps = computed<Dependency[]>(() => {
     const s = this.scan();
     if (!s) return [];
+    if (this.typeFilter() === 'heuristic') return []; // hide CVE section when filtering to heuristic
     return s.dependencies
-      .filter((d) => this.cveFindings(d).length > 0)
+      .filter((d) => this.filteredCveFindings(d).length > 0)
       .sort((a, b) => this.worstScore(b) - this.worstScore(a));
   });
+
+  // CVE findings passed through the active severity filter
+  filteredCveFindings(d: Dependency): Finding[] {
+    const sev = this.severityFilter();
+    return this.cveFindings(d).filter(
+      (f) => sev === 'all' || this.normalizeSev(f.severity).toLowerCase() === sev
+    );
+  }
 
   // packages flagged by heuristics (suspicious/caution), no matter CVE status
   suspiciousDeps = computed<Dependency[]>(() => {
     const s = this.scan();
     if (!s) return [];
+    if (this.typeFilter() === 'cve') return []; // hide when filtering to CVE only
     return s.dependencies
       .filter((d) => this.heuristicFindings(d).length > 0)
       .sort((a, b) => (a.trust_score ?? 100) - (b.trust_score ?? 100));
@@ -96,7 +154,7 @@ export class AppComponent {
     const reader = new FileReader();
     reader.onload = () => {
       this.lockfileText.set(String(reader.result ?? ''));
-      if (!this.sourceName()) this.sourceName.set(file.name.replace(/\.json$/, ''));
+      if (!this.sourceName()) this.sourceName.set(file.name.replace(/\.(json|lock|txt|mod|sum)$/, ''));
     };
     reader.readAsText(file);
   }
@@ -106,19 +164,13 @@ export class AppComponent {
     this.scan.set(null);
     const raw = this.lockfileText().trim();
     if (!raw) {
-      this.error.set('Paste a package-lock.json (or package.json) or choose a file first.');
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      this.error.set('That is not valid JSON. Make sure it is a package-lock.json or package.json.');
+      this.error.set('Paste a manifest or choose a file first.');
       return;
     }
     this.loading.set(true);
-    // 1) create the scan (returns immediately with status "processing")
-    this.scans.createScan(parsed, this.sourceName() || undefined).subscribe({
+    // Send RAW text — the parser detects the ecosystem. No JSON parse here,
+    // since Gemfile.lock / go.mod / Cargo.lock aren't JSON.
+    this.scans.createScan(raw, this.fileName() || undefined, this.sourceName() || undefined).subscribe({
       next: (created) => {
         this.loading.set(false);
         this.processing.set(true);
@@ -189,6 +241,36 @@ export class AppComponent {
     if (!fs.length) return 0;
     return Math.max(...fs.map((f) => this.severityRank(f.severity)));
   }
+
+  exportJson(): void {
+    const s = this.scan();
+    if (!s) return;
+    const blob = new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `depguard-${s.source_name || 'scan'}-${s.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  copyUpgrade(dep: Dependency, f: Finding): void {
+    if (!f.fixed_version) return;
+    const eco = this.scan()?.ecosystem;
+    let cmd: string;
+    switch (eco) {
+      case 'Packagist': cmd = `composer require ${dep.name}:^${f.fixed_version}`; break;
+      case 'PyPI':      cmd = `pip install ${dep.name}==${f.fixed_version}`; break;
+      case 'RubyGems':  cmd = `bundle update ${dep.name} --to ${f.fixed_version}`; break;
+      case 'Go':        cmd = `go get ${dep.name}@${f.fixed_version}`; break;
+      case 'crates.io': cmd = `cargo update -p ${dep.name} --precise ${f.fixed_version}`; break;
+      default:          cmd = `npm install ${dep.name}@${f.fixed_version}`;
+    }
+    navigator.clipboard?.writeText(cmd);
+  }
+
+  setSeverityFilter(v: string): void { this.severityFilter.set(v); }
+  setTypeFilter(v: string): void { this.typeFilter.set(v); }
 
   trackByDep = (_: number, d: Dependency) => d.id;
   trackByFinding = (_: number, f: Finding) => f.id;

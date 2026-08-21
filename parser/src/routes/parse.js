@@ -2,42 +2,48 @@
  * routes/parse.js
  *
  * POST /parse
- * Body: the raw contents of a package-lock.json (as JSON).
- * Returns: { ecosystem, count, dependencies: [{name, version, isDirect}] }
+ * Accepts EITHER:
+ *   - Content-Type: text/plain  → the raw manifest text (any ecosystem)
+ *   - Content-Type: application/json with { "content": "<raw text>", "filename": "..." }
+ *   - Content-Type: application/json with a raw JSON manifest (legacy: npm/composer)
  *
- * The route is thin on purpose: it only handles HTTP concerns
- * (read body, validate, call the service, shape the response, handle errors).
- * All real logic lives in services/lockfileParser.js.
+ * Returns: { ecosystem, count, dependencies: [{name, version, isDirect}] }
  */
 
-import { Router } from "express";
-import { parseNpmLockfile } from "../services/lockfileParser.js";
+import { Router } from 'express';
+import { routeManifest } from '../services/manifestRouter.js';
 
 const router = Router();
 
-router.post("/parse", (req, res) => {
-  const lock = req.body;
+router.post('/parse', (req, res) => {
+  let text = '';
+  let hint = '';
 
-  // Basic validation — did we actually get a lockfile-shaped object?
-  if (!lock || typeof lock !== "object" || Array.isArray(lock)) {
-    return res.status(400).json({
-      error: "Request body must be the JSON contents of a package-lock.json",
-    });
+  const body = req.body;
+
+  if (typeof body === 'string') {
+    // raw text/plain body
+    text = body;
+  } else if (body && typeof body === 'object') {
+    if (typeof body.content === 'string') {
+      // { content, filename } wrapper
+      text = body.content;
+      hint = body.filename || '';
+    } else {
+      // legacy: a raw JSON manifest object (npm/composer) — re-stringify
+      text = JSON.stringify(body);
+    }
+  }
+
+  if (!text.trim()) {
+    return res.status(400).json({ error: 'Request must include manifest content (text or JSON).' });
   }
 
   try {
-    const dependencies = parseNpmLockfile(lock);
-    return res.json({
-      ecosystem: "npm",
-      count: dependencies.length,
-      dependencies,
-    });
+    const { ecosystem, dependencies } = routeManifest(text, hint);
+    return res.json({ ecosystem, count: dependencies.length, dependencies });
   } catch (err) {
-    // A parse failure is the client's bad input, not a server fault → 422.
-    return res.status(422).json({
-      error: "Could not parse lockfile",
-      detail: err.message,
-    });
+    return res.status(422).json({ error: 'Could not parse manifest', detail: err.message });
   }
 });
 
