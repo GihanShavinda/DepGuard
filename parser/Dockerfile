@@ -1,16 +1,10 @@
-# DepGuard parser service — Node 20
+# DepGuard parser service — Node 20, container host ready
 FROM node:20-alpine
-
 WORKDIR /app
-
-# Install deps first (better layer caching)
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
-
-# Copy source
-COPY src ./src
-
-ENV PARSER_PORT=3001
+COPY . .
+# $PORT is provided by the platform (Render). Falls back to 3001 locally.
+ENV PORT=3001
 EXPOSE 3001
-
 CMD ["node", "src/index.js"]

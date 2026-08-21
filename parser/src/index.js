@@ -1,28 +1,27 @@
 /**
  * index.js — DepGuard parser service entry point.
+ *   POST /parse       — lockfile/package.json -> dependency list
+ *   POST /heuristics  — Trust Score signals
  *
- * A small Express service with one job (for now): turn a JS lockfile
- * into a flat dependency list. Laravel calls this over HTTP.
+ * Listens on $PORT (cloud platforms set this) falling back to PARSER_PORT then 3001.
  */
 
 import express from "express";
 import parseRoute from "./routes/parse.js";
+import heuristicsRoute from "./routes/heuristics.js";
 
 const app = express();
-const PORT = process.env.PARSER_PORT || 3001;
+const PORT = process.env.PORT || process.env.PARSER_PORT || 3001;
 
-// Lockfiles can be large — allow a generous JSON body limit.
 app.use(express.json({ limit: "10mb" }));
 
-// Health check — handy for Docker and for a quick "is it up?" curl.
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "depguard-parser" });
 });
 
-// Feature routes.
 app.use("/", parseRoute);
+app.use("/", heuristicsRoute);
 
-// 404 fallback.
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found" });
 });

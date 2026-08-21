@@ -1,0 +1,182 @@
+<div class="page">
+  <div class="grid-overlay"></div>
+
+  <header class="masthead">
+    <div class="mark">
+      <span class="mark-glyph">◆</span>
+      <span class="mark-name">DepGuard</span>
+    </div>
+    <p class="tagline">Supply-chain threat inspection</p>
+  </header>
+
+  @if (!scan() && !processing()) {
+    <section class="intake">
+      <div class="intake-head">
+        <span class="eyebrow">// manifest intake</span>
+        <h1>Inspect a dependency tree for <span class="hl">known & unknown</span> threats</h1>
+        <p class="lede">
+          Paste a <code>package-lock.json</code> (preferred) or <code>package.json</code>.
+          DepGuard resolves the tree, checks every package against the OSV vulnerability
+          database, <em>and</em> scores each one for supply-chain risk — catching suspicious
+          packages that have no CVE yet.
+        </p>
+      </div>
+
+      <div class="field">
+        <label for="source">Project label <span class="optional">optional</span></label>
+        <input id="source" type="text" placeholder="my-app"
+          [ngModel]="sourceName()" (ngModelChange)="sourceName.set($event)" />
+      </div>
+
+      <div class="field">
+        <div class="field-row">
+          <label for="lockfile">manifest</label>
+          <label class="file-btn">
+            {{ fileName() || 'choose file' }}
+            <input type="file" accept=".json,application/json" (change)="onFileSelected($event)" hidden />
+          </label>
+        </div>
+        <textarea id="lockfile" spellcheck="false"
+          placeholder='{ "name": "my-app", "lockfileVersion": 3, "packages": { ... } }'
+          [ngModel]="lockfileText()" (ngModelChange)="lockfileText.set($event)"></textarea>
+      </div>
+
+      @if (error()) { <p class="notice notice-error">{{ error() }}</p> }
+
+      <button class="run" (click)="submit()" [disabled]="loading()">
+        @if (loading()) { <span class="spinner"></span> inspecting… }
+        @else { <span class="run-glyph">▸</span> run inspection }
+      </button>
+    </section>
+  }
+
+  @if (processing()) {
+    <section class="processing">
+      <div class="scan-anim">
+        <span class="scan-ring"></span>
+        <span class="scan-core">◆</span>
+      </div>
+      <h2>Inspecting dependency tree…</h2>
+      <p>Resolving packages, checking OSV for known vulnerabilities, and scoring supply-chain risk. Large trees take a little longer.</p>
+    </section>
+  }
+
+  @if (scan(); as s) {
+    <section class="report">
+      <div class="verdict" [class]="'grade-' + grade()">
+        <div class="verdict-grade">
+          <span class="grade-ring">
+            <span class="grade-letter">{{ grade() }}</span>
+          </span>
+        </div>
+        <div class="verdict-body">
+          <p class="verdict-caption">{{ gradeCaption() }}</p>
+          <h2>{{ s.source_name || 'unnamed project' }}</h2>
+          <div class="verdict-stats">
+            <span class="stat"><strong>{{ s.summary_counts?.total }}</strong> packages</span>
+            <span class="stat stat-cve"><strong>{{ vulnerableDeps().length }}</strong> vulnerable</span>
+            <span class="stat stat-susp"><strong>{{ suspiciousDeps().length }}</strong> flagged</span>
+          </div>
+          @if (s.summary_counts?.osv_checked === false) {
+            <p class="notice notice-warn">OSV unreachable — dependencies resolved but not CVE-checked.</p>
+          }
+        </div>
+        <button class="new-scan" (click)="reset()">new scan</button>
+      </div>
+
+      <!-- ===== SUSPICIOUS / TRUST SCORE ===== -->
+      @if (suspiciousDeps().length > 0) {
+        <div class="section-label susp-label">
+          <span class="blip"></span> Trust-score flags
+          <span class="count">{{ suspiciousDeps().length }} packages</span>
+        </div>
+        <p class="section-note">
+          Behavioral signals — <strong>not proof of malware</strong>. These packages warrant a manual look.
+        </p>
+
+        <ul class="findings">
+          @for (dep of suspiciousDeps(); track trackByDep($index, dep)) {
+            <li class="dep-card" [class]="trustClass(dep.trust_level)">
+              <div class="dep-head">
+                <div class="dep-id">
+                  <span class="dep-name">{{ dep.name }}</span>
+                  <span class="dep-version">{{ dep.version }}</span>
+                  @if (dep.is_direct) { <span class="tag tag-direct">direct</span> }
+                  @else { <span class="tag tag-transitive">transitive</span> }
+                </div>
+                <div class="trust-meter">
+                  <span class="trust-num">{{ dep.trust_score }}</span>
+                  <span class="trust-label">/100 trust</span>
+                </div>
+              </div>
+              <div class="finding-list">
+                @for (f of heuristicFindings(dep); track trackByFinding($index, f)) {
+                  <div class="finding">
+                    <span class="sev-badge" [class]="severityClass(f.severity)">{{ f.severity }}</span>
+                    <div class="finding-body">
+                      <span class="reason-code">{{ f.vuln_id }}</span>
+                      <p class="finding-title">{{ f.title }}</p>
+                    </div>
+                  </div>
+                }
+              </div>
+            </li>
+          }
+        </ul>
+      }
+
+      <!-- ===== CVE FINDINGS ===== -->
+      @if (vulnerableDeps().length > 0) {
+        <div class="section-label cve-label">
+          <span class="blip"></span> Known vulnerabilities
+          <span class="count">{{ vulnerableDeps().length }} packages</span>
+        </div>
+        <ul class="findings">
+          @for (dep of vulnerableDeps(); track trackByDep($index, dep)) {
+            <li class="dep-card">
+              <div class="dep-head">
+                <div class="dep-id">
+                  <span class="dep-name">{{ dep.name }}</span>
+                  <span class="dep-version">{{ dep.version }}</span>
+                  @if (dep.is_direct) { <span class="tag tag-direct">direct</span> }
+                  @else { <span class="tag tag-transitive">transitive</span> }
+                </div>
+                <span class="dep-count">{{ cveFindings(dep).length }} CVE{{ cveFindings(dep).length > 1 ? 's' : '' }}</span>
+              </div>
+              <div class="finding-list">
+                @for (f of cveFindings(dep); track trackByFinding($index, f)) {
+                  <div class="finding">
+                    <span class="sev-badge" [class]="severityClass(f.severity)">{{ f.severity || 'Unknown' }}</span>
+                    <div class="finding-body">
+                      <div class="finding-top">
+                        <a class="vuln-id" [href]="f.url" target="_blank" rel="noopener">{{ f.vuln_id }}</a>
+                        @if (f.cvss_score != null) { <span class="cvss">CVSS {{ f.cvss_score }}</span> }
+                      </div>
+                      @if (f.title) { <p class="finding-title">{{ f.title }}</p> }
+                      @if (f.fixed_version) {
+                        <p class="remediation">→ fixed in <code>{{ f.fixed_version }}</code> — upgrade {{ dep.name }} to {{ f.fixed_version }}+</p>
+                      }
+                    </div>
+                  </div>
+                }
+              </div>
+            </li>
+          }
+        </ul>
+      }
+
+      <div class="section-label clean-label">
+        <span class="blip"></span> Cleared
+        <span class="count">{{ cleanCount() }} packages</span>
+      </div>
+      <p class="clean-note">
+        {{ cleanCount() }} of {{ s.summary_counts?.total }} packages showed no known vulnerabilities and no risk signals.
+      </p>
+    </section>
+  }
+
+  <footer class="foot">
+    <span>DepGuard</span><span class="foot-sep">::</span>
+    <span>OSV.dev + behavioral heuristics</span>
+  </footer>
+</div>

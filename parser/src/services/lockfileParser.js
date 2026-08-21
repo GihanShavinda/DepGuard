@@ -33,8 +33,23 @@ export function parseNpmLockfile(lock) {
   }
 
   // Legacy format (lockfileVersion 1): nested "dependencies" tree.
-  if (lock.dependencies && typeof lock.dependencies === "object") {
+  // NOTE: a lockfile has BOTH a lockfileVersion and a dependencies/packages
+  // map. A plain package.json has dependencies too but no lockfileVersion and
+  // its values are version *strings*, not objects — we handle that below.
+  if (
+    lock.dependencies &&
+    typeof lock.dependencies === "object" &&
+    (lock.lockfileVersion !== undefined || isLockfileDepShape(lock.dependencies))
+  ) {
     return dedupe(parseLegacyDependencies(lock.dependencies));
+  }
+
+  // Fallback: a plain package.json (no lockfileVersion). Only DIRECT deps,
+  // and versions are ranges (^, ~) which we strip to a best-effort version.
+  // This is shallower than a lockfile — the caller should be told to prefer
+  // the lockfile — but it's a friendlier experience than a hard error.
+  if (looksLikePackageJson(lock)) {
+    return parsePackageJson(lock);
   }
 
   throw new Error(
@@ -111,4 +126,55 @@ function dedupe(list) {
   }
 
   return [...map.values()];
+}
+
+/**
+ * A lockfile's `dependencies` values are OBJECTS ({version, ...}).
+ * A package.json's `dependencies` values are STRINGS ("^4.17.0").
+ */
+function isLockfileDepShape(deps) {
+  const first = Object.values(deps)[0];
+  return first && typeof first === "object";
+}
+
+function looksLikePackageJson(obj) {
+  const hasDepBlock =
+    (obj.dependencies && typeof obj.dependencies === "object") ||
+    (obj.devDependencies && typeof obj.devDependencies === "object");
+  // package.json dep values are strings
+  const stringy = (block) =>
+    !block || Object.values(block).every((v) => typeof v === "string");
+  return (
+    hasDepBlock &&
+    stringy(obj.dependencies) &&
+    stringy(obj.devDependencies)
+  );
+}
+
+/**
+ * Parse a plain package.json. Direct deps only; strip range operators to a
+ * best-effort concrete version (OSV needs a concrete version to match).
+ */
+function parsePackageJson(pkg) {
+  const out = [];
+  const collect = (block) => {
+    if (!block) return;
+    for (const [name, range] of Object.entries(block)) {
+      const version = cleanRange(range);
+      if (version) out.push({ name, version, isDirect: true });
+    }
+  };
+  collect(pkg.dependencies);
+  collect(pkg.devDependencies);
+  return dedupe(out);
+}
+
+/**
+ * "^4.17.0" -> "4.17.0", "~1.2.3" -> "1.2.3", ">=2.0.0" -> "2.0.0".
+ * Returns null for non-pinnable specs (git urls, "*", "latest", workspace:).
+ */
+function cleanRange(range) {
+  if (typeof range !== "string") return null;
+  const m = range.match(/(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/);
+  return m ? m[1] : null;
 }

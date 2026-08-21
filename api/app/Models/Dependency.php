@@ -13,10 +13,13 @@ class Dependency extends Model
         'name',
         'version',
         'is_direct',
+        'trust_score',
+        'trust_level',
     ];
 
     protected $casts = [
-        'is_direct' => 'boolean',
+        'is_direct'   => 'boolean',
+        'trust_score' => 'integer',
     ];
 
     public function scan(): BelongsTo
