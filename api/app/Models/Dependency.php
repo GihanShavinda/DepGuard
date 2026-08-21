@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Dependency extends Model
 {
@@ -18,11 +19,13 @@ class Dependency extends Model
         'is_direct' => 'boolean',
     ];
 
-    /**
-     * Each dependency belongs to one scan.
-     */
     public function scan(): BelongsTo
     {
         return $this->belongsTo(Scan::class);
+    }
+
+    public function findings(): HasMany
+    {
+        return $this->hasMany(Finding::class);
     }
 }

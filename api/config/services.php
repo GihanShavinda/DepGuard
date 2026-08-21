@@ -37,5 +37,9 @@ return [
     'parser' => [
     'url' => env('PARSER_URL', 'http://localhost:3001'),
    ],
+       'osv' => [
+        'url' => env('OSV_API_URL', 'https://api.osv.dev'),
+    ],
+
 
 ];
